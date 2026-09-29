@@ -1,4 +1,11 @@
 from typing import Annotated
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+
+from app.event_cache import (
+    EventCacheMissTimeout,
+    EventNotFoundError,
+    get_event_single_flight,
+)
 
 from fastapi import APIRouter, Depends, Header, status
 
@@ -52,8 +59,24 @@ async def list_events() -> list[EventRead]:
 
 @router.get("/events/{event_id}")
 async def get_event(event_id: int) -> EventRead:
-    """Возвращает описание мероприятия."""
-    ...
+    """Возвращает описание мероприятия.
+
+    Распределённый SingleFlight: при одновременном cache miss в БД за событием
+    пойдёт только один запрос (под Redis Lock), остальные дождутся результата
+    из Redis-кэша либо упадут по таймауту с 503.
+    """
+    try:
+        return await get_event_single_flight(event_id)
+    except EventNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Мероприятие {event_id} не найдено",
+        ) from None
+    except EventCacheMissTimeout:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось дождаться загрузки мероприятия, повторите запрос позже",
+        ) from None
 
 
 @router.get("/events/{event_id}/seats")
