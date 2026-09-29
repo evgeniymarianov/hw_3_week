@@ -1,0 +1,61 @@
+[project]
+name = "samokat"
+version = "0.1.0"
+description = "Samokat course project"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.14.1",
+    "alembic>=1.18.4",
+    "argon2-cffi>=25.1.0",
+    "cachetools>=7.1.4",
+    "celery[redis]>=5.3.1",
+    "clickhouse-connect>=1.3.0",
+    "dishka>=1.10.1",
+    "fastapi>=0.138.0",
+    "faststream[kafka]>=0.7.1",
+    "greenlet>=3.5.2",
+    "httpx>=0.28.1",
+    "line-profiler>=5.0.2",
+    "numpy>=2.5.0",
+    "openpyxl>=3.1.5",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "pyinstrument>=5.1.2",
+    "pyjwt>=2.13.0",
+    "redis>=8.0.0",
+    "sqlalchemy>=2.0.51",
+    "taskiq>=0.12.4",
+    "taskiq-redis>=1.2.3",
+    "uvicorn>=0.49.0",
+    "uvloop>=0.22.1",
+    "viztracer>=1.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "ruff>=0.15.18",
+]
+
+[tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
+select = [
+    "ASYNC210", # Запрещает блокирующие HTTP-вызовы в async-функциях
+    "ASYNC212", # Запрещает синхронный httpx.Client в async-функциях
+    "ASYNC220", # Запрещает блокирующее создание subprocess в async-функциях
+    "ASYNC221", # Запрещает блокирующий запуск процессов в async-функциях
+    "ASYNC222", # Запрещает блокирующее ожидание процессов в async-функциях
+    "ASYNC230", # Запрещает обычный open() в async-функциях
+    "ASYNC240", # Запрещает блокирующие os.path/pathlib операции в async-функциях
+    "ASYNC251", # Запрещает time.sleep() в async-функциях
+    "RUF006", # Требует сохранять ссылки на созданные asyncio task
+    "RUF029", # Находит async-функции без await
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/samokat"]

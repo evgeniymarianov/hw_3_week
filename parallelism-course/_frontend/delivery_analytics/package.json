@@ -1,0 +1,18 @@
+{
+  "name": "delivery-analytics-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "leaflet": "^1.9.4",
+    "vite": "^6.3.5",
+    "vue": "^3.5.18"
+  },
+  "devDependencies": {}
+}

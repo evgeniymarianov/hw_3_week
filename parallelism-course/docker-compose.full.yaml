@@ -1,0 +1,319 @@
+services:
+  samokat-postgres:
+    image: postgres:17.10-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "8432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - samokat_postgres_data:/var/lib/postgresql/data
+
+  delivery-analytics-postgres:
+    image: postgres:17.10-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "8433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - delivery_analytics_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8.0-alpine
+    ports:
+      - "6379:6379"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.11-alpine
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: default
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:25.11-alpine
+    depends_on:
+      - clickhouse
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      i=0
+      until clickhouse-client --host clickhouse --password default --query "SELECT 1" >/dev/null 2>&1; do
+        i=$$((i + 1))
+        if [ "$$i" -ge 30 ]; then
+          echo "ClickHouse is not ready"
+          exit 1
+        fi
+        sleep 2
+      done
+      clickhouse-client --host clickhouse --password default --query "
+        CREATE TABLE IF NOT EXISTS user_events
+        (
+            user_id UInt64,
+            event LowCardinality(String),
+            category LowCardinality(String),
+            event_time DateTime64(3, 'UTC'),
+            created_time DateTime64(3, 'UTC') DEFAULT now64(3)
+        )
+        ENGINE = MergeTree
+        ORDER BY (event_time, user_id, event);
+      "
+
+  kafka:
+    image: bitnamilegacy/kafka:3.7
+    environment:
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:29092,CONTROLLER://:9093,EXTERNAL://:9092"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
+
+  kafka-init:
+    image: bitnamilegacy/kafka:3.7
+    depends_on:
+      - kafka
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        KAFKA_TOPICS=/opt/bitnami/kafka/bin/kafka-topics.sh
+        for i in {1..30}; do
+          $$KAFKA_TOPICS --bootstrap-server kafka:29092 --list >/dev/null 2>&1 && break
+          sleep 2
+        done
+        $$KAFKA_TOPICS --bootstrap-server kafka:29092 --create --if-not-exists --topic delivery.tracking --partitions 2 --replication-factor 1
+        $$KAFKA_TOPICS --bootstrap-server kafka:29092 --alter --topic delivery.tracking --partitions 2 || true
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: samokat-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    ports:
+      - "8080:8080"
+
+  address-api:
+    build:
+      context: ./_external_services/api_address
+    ports:
+      - "8101:8000"
+    volumes:
+      - ./_external_services/api_address/tokens.json:/app/tokens.json
+
+  darkstore-api:
+    build:
+      context: ./_external_services/api_darkstore
+    ports:
+      - "8102:8000"
+
+  delivery-api:
+    build:
+      context: ./_external_services/api_delivery
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8103:8000"
+    volumes:
+      - ./_external_services/api_delivery/deliveries.json:/app/deliveries.json
+
+  samokat-migrations:
+    build:
+      context: ./samokat
+    command: ["alembic", "upgrade", "head"]
+    environment: &samokat_env
+      APP__ENV: local
+      APP__HOST: 0.0.0.0
+      APP__PORT: 8000
+      APP__RELOAD: "false"
+      POSTGRES__HOST: samokat-postgres
+      POSTGRES__PORT: 5432
+      POSTGRES__USER: postgres
+      POSTGRES__PASSWORD: postgres
+      POSTGRES__DATABASE: postgres
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      REDIS__DATABASE: 0
+      CLICKHOUSE__HOST: clickhouse
+      CLICKHOUSE__PORT: 8123
+      CLICKHOUSE__USERNAME: default
+      CLICKHOUSE__PASSWORD: default
+      CLICKHOUSE__DATABASE: default
+      TOKEN__SECRET_KEY: dev-secret-key-change-me
+      TOKEN__ALGORITHM: HS256
+      TOKEN__ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      TOKEN__REFRESH_TOKEN_EXPIRE_DAYS: 30
+      CONNECTORS__ADDRESS__BASE_URL: http://address-api:8000
+      CONNECTORS__ADDRESS__CLIENT_ID: addrs-clid-A9f3K7mQ2xP8rT5n
+      CONNECTORS__ADDRESS__CLIENT_SECRET: addrs-scrt-s8D4qW7zL2pV9cH6bN3y
+      CONNECTORS__ADDRESS__TIMEOUT: 5
+      CONNECTORS__DARKSTORE__BASE_URL: http://darkstore-api:8000
+      CONNECTORS__DARKSTORE__API_KEY: drkstr-D7xR4nQ9vK2mP8sT5yB6
+      CONNECTORS__DARKSTORE__TIMEOUT: 5
+      CONNECTORS__DELIVERY__BASE_URL: http://delivery-api:8000
+      CONNECTORS__DELIVERY__API_KEY: dl-L4pZ9cV2mH8qT6rN3xW7
+      CONNECTORS__DELIVERY__TIMEOUT: 5
+      KAFKA__BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA__TRACKING_TOPIC: delivery.tracking
+    depends_on:
+      samokat-postgres:
+        condition: service_healthy
+
+#  samokat:
+#    build:
+#      context: ./samokat
+#    environment:
+#      <<: *samokat_env
+#    depends_on:
+#      samokat-migrations:
+#        condition: service_completed_successfully
+#      redis:
+#        condition: service_started
+#      clickhouse-init:
+#        condition: service_completed_successfully
+#      address-api:
+#        condition: service_started
+#      darkstore-api:
+#        condition: service_started
+#      delivery-api:
+#        condition: service_started
+#    ports:
+#      - "8000:8000"
+
+#  samokat-taskiq-admin:
+#    image: ghcr.io/taskiq-python/taskiq-admin:latest
+#    ports:
+#      - "3000:3000"
+#    environment:
+#      TASKIQ_ADMIN_API_TOKEN: supersecret
+#    volumes:
+#      - samokat_taskiq_admin_data:/usr/database/
+#
+#  samokat-taskiq-async-worker:
+#    build:
+#      context: ./samokat
+#    command: taskiq worker samokat.infrastructure.tasks.taskiq_app:broker_async samokat.infrastructure.tasks.taskiq_tasks
+#    environment:
+#      <<: *samokat_env
+#    depends_on:
+#      samokat-migrations:
+#        condition: service_completed_successfully
+#      redis:
+#        condition: service_started
+#      darkstore-api:
+#        condition: service_started
+#      samokat-taskiq-admin:
+#        condition: service_started
+#
+#  samokat-taskiq-cpu-worker:
+#    build:
+#      context: ./samokat
+#    command: taskiq worker samokat.infrastructure.tasks.taskiq_app:broker_cpu samokat.infrastructure.tasks.taskiq_tasks
+#    environment:
+#      <<: *samokat_env
+#    depends_on:
+#      samokat-migrations:
+#        condition: service_completed_successfully
+#      redis:
+#        condition: service_started
+#      samokat-taskiq-admin:
+#        condition: service_started
+#
+#  samokat-taskiq-scheduler:
+#    build:
+#      context: ./samokat
+#    command: taskiq scheduler samokat.infrastructure.tasks.taskiq_app:scheduler samokat.infrastructure.tasks.taskiq_tasks
+#    environment:
+#      <<: *samokat_env
+#    depends_on:
+#      samokat-migrations:
+#        condition: service_completed_successfully
+#      redis:
+#        condition: service_started
+#      darkstore-api:
+#        condition: service_started
+#      samokat-taskiq-admin:
+#        condition: service_started
+
+  delivery-analytics-migrations:
+    build:
+      context: ./delivery_analytics
+    command: ["alembic", "upgrade", "head"]
+    environment: &delivery_analytics_env
+      DELIVERY_ANALYTICS__POSTGRES__HOST: delivery-analytics-postgres
+      DELIVERY_ANALYTICS__POSTGRES__PORT: 5432
+      DELIVERY_ANALYTICS__POSTGRES__USER: postgres
+      DELIVERY_ANALYTICS__POSTGRES__PASSWORD: postgres
+      DELIVERY_ANALYTICS__POSTGRES__DATABASE: postgres
+      DELIVERY_ANALYTICS__KAFKA__BOOTSTRAP_SERVERS: kafka:29092
+      DELIVERY_ANALYTICS__KAFKA__TRACKING_TOPIC: delivery.tracking
+      DELIVERY_ANALYTICS__QUEUES__WS_SEND_TIMEOUT_SEC: 2
+    depends_on:
+      delivery-analytics-postgres:
+        condition: service_healthy
+
+#  delivery-analytics:
+#    build:
+#      context: ./delivery_analytics
+#    environment:
+#      <<: *delivery_analytics_env
+#    depends_on:
+#      delivery-analytics-migrations:
+#        condition: service_completed_successfully
+#      kafka-init:
+#        condition: service_completed_successfully
+#    ports:
+#      - "8104:8000"
+
+  delivery-analytics-frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    environment:
+      VITE_WS_URL: ws://localhost:8005/ws/courier_events
+      VITE_TRACKING_PRODUCER_API_URL: http://localhost:8000
+#    depends_on:
+#      delivery-analytics:
+#        condition: service_started
+#      samokat:
+#        condition: service_started
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./_frontend/delivery_analytics:/app
+
+volumes:
+  samokat_postgres_data:
+  delivery_analytics_postgres_data:
+  clickhouse_data:
+  kafka_data:
+  samokat_taskiq_admin_data:

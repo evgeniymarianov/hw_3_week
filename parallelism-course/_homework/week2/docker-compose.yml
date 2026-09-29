@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "7432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  payment-api:
+    build: ./mock_apis/payment
+    ports:
+      - "9001:9001"
+
+  protection-api:
+    build: ./mock_apis/protection
+    ports:
+      - "9002:9002"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "7379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # app запускаем локально: сначала `uv run alembic upgrade head`
+  # потом `uv run uvicorn app.main:app --reload`
+  # app:
+  #   build: .
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - .:/app
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     payment-api:
+  #       condition: service_started
+  #     protection-api:
+  #       condition: service_started
+  #     redis:
+  #       condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -1,0 +1,39 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.ruff_cache/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# IDE files
+.idea/
+**/.DS_Store
+
+# Frontend generated files
+_frontend/**/dist/
+_frontend/**/node_modules/
+_frontend/**/.npm-cache/
+_frontend/**/.pnpm-store/
+_frontend/**/.yarn/
+_frontend/**/.vite/
+_frontend/**/.turbo/
+_frontend/**/.parcel-cache/
+
+# Celery runtime files
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat-schedule*
+samokat/celerybeat-schedule
+samokat/celerybeat-schedule.*
+samokat/celerybeat-schedule*
+celerybeat.pid
+celeryd.pid
+celery*.log
+
+# Generated reports
+samokat/reports/
