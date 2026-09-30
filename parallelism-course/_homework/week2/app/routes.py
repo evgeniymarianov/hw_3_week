@@ -23,6 +23,9 @@ from app.schemas import (
     SeatRead,
 )
 
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from app.views import ViewService
+
 router = APIRouter()
 
 
@@ -31,6 +34,13 @@ def get_current_user_id(x_user_id: Annotated[int, Header()]) -> int:
 
 
 CurrentUserId = Annotated[int, Depends(get_current_user_id)]
+
+
+def get_view_service() -> ViewService:
+    return ViewService()
+
+
+ViewServiceProvider = Annotated[ViewService, Depends(get_view_service)]
 
 
 @router.get("/locations")
@@ -58,13 +68,24 @@ async def list_events() -> list[EventRead]:
 
 
 @router.get("/events/{event_id}")
-async def get_event(event_id: int) -> EventRead:
+async def get_event(
+    event_id: int,
+    request: Request,
+    service: ViewServiceProvider,
+) -> EventRead:
     """Возвращает описание мероприятия.
 
     Распределённый SingleFlight: при одновременном cache miss в БД за событием
     пойдёт только один запрос (под Redis Lock), остальные дождутся результата
     из Redis-кэша либо упадут по таймауту с 503.
+
+    Учёт просмотров: просмотр того же мероприятия с того же IP засчитывается
+    не чаще одного раза за 5 минут (дедупликация через Redis). Уникальные
+    просмотры уходят в asyncio.Queue и пишутся в БД фоновым воркером
+    агрегированным обновлением счётчика.
     """
+    await service.register_view(event_id=event_id, ip=request.client.host if request.client else None)
+
     try:
         return await get_event_single_flight(event_id)
     except EventNotFoundError:
